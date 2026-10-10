@@ -269,9 +269,12 @@ class DeterministicEngine(Engine):
 
         self.logger.info("Resuming from iteration for provided data will fetch data until required iteration ...")
         if hasattr(data, "__len__"):
+            # Synchronize from the beginning of the current dataflow cycle.
+            self._setup_seed(iteration=iteration)
             iteration %= len(data)  # type: ignore[arg-type]
-        # Synchronize dataflow from the beginning
-        self._setup_seed(iteration=0)
+        else:
+            # Unsized iterables are replayed from the beginning.
+            self._setup_seed(iteration=0)
         data_iter = iter(data)
         counter = 0
         while counter < iteration:

@@ -2,6 +2,7 @@ import os
 import random
 import sys
 from collections.abc import Mapping
+from copy import deepcopy
 from unittest.mock import patch
 
 import numpy as np
@@ -895,3 +896,43 @@ def test_state_dict():
     assert "max_epochs" in sd and sd["max_epochs"] is None
     assert "epoch_length" in sd and sd["epoch_length"] is None
     assert "rng_states" in sd and sd["rng_states"] is not None
+
+
+@pytest.mark.parametrize("checkpoint_iteration", [3, 10, 13, 20])
+@pytest.mark.parametrize("epoch_length", [7, 10, 15])
+@pytest.mark.parametrize("shuffle", [False, True])
+def test_resume_sized_iterable_rng(checkpoint_iteration, epoch_length, shuffle):
+    class Data:
+        def __len__(self):
+            return 10
+
+        def __iter__(self):
+            if shuffle:
+                return iter(torch.randperm(10).tolist())
+            return iter(range(10))
+
+    def run(checkpoint=None):
+        seen, saved = [], []
+
+        def process(engine, batch):
+            seen.append((batch, random.random(), np.random.rand(), torch.rand(4)))
+
+        engine = DeterministicEngine(process)
+
+        @engine.on(Events.ITERATION_COMPLETED(once=checkpoint_iteration))
+        def save():
+            saved.append(deepcopy(engine.state_dict()))
+
+        if checkpoint is not None:
+            engine.load_state_dict(checkpoint)
+        manual_seed(32)
+        engine.run(Data(), max_epochs=4, epoch_length=epoch_length)
+        return seen, saved
+
+    reference, saved = run()
+    resumed, _ = run(saved[0])
+    expected = reference[checkpoint_iteration:]
+    assert len(resumed) == len(expected)
+    for actual, original in zip(resumed, expected):
+        assert actual[:3] == original[:3]
+        assert torch.equal(actual[3], original[3])
